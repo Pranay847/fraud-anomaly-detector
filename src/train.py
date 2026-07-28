@@ -179,7 +179,7 @@ def run_model(name: str, splits, args) -> dict:
             display = baseline.DISPLAY_NAME
         elif name == "xgb-tuned":
             variant = args.tune_variant or _best_variant_from_metrics()
-            print(f"  tuning the '{variant}' variant (best PR-AUC among the resampling runs)")
+            print(f"  tuning the '{variant}' variant")
             search = supervised.build_search(
                 variant,
                 y_train,
