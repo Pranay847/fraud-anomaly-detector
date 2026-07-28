@@ -47,9 +47,10 @@ Validation set (42,607 transactions, 74 fraud). Full detail in [results.md](resu
 | Precision @ threshold 0.03 | 0.7011 (26 false positives) |
 
 Validation said 0.8760, the test set said 0.8362. The 0.04 gap is what sampling
-noise on 74 positives looks like — the cross-validated fold spread was ±0.047 —
-but the test number is the honest one, and the validation figure was the
-optimistic end of the range. That is precisely why the test set is opened once.
+noise on 74 positives looks like — the cross-validated fold spread measured on
+this same pipeline was ±0.047 — but the test number is the honest one, and the
+validation figure was the optimistic end of the range. That is precisely why
+the test set is opened once.
 
 ### Four things the table says
 
