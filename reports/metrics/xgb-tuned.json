@@ -1,0 +1,59 @@
+{
+  "model": "xgb-tuned",
+  "split": "val",
+  "n": 42607,
+  "n_fraud": 74,
+  "pr_auc": 0.8760457258829011,
+  "roc_auc": 0.9835745980386612,
+  "thresholds": [
+    {
+      "threshold": 0.3,
+      "precision": 0.8591549295774648,
+      "recall": 0.8243243243243243,
+      "f1": 0.8413793103448276,
+      "tp": 61,
+      "fp": 10,
+      "fn": 13,
+      "tn": 42523
+    },
+    {
+      "threshold": 0.5,
+      "precision": 0.8823529411764706,
+      "recall": 0.8108108108108109,
+      "f1": 0.8450704225352113,
+      "tp": 60,
+      "fp": 8,
+      "fn": 14,
+      "tn": 42525
+    },
+    {
+      "threshold": 0.7,
+      "precision": 0.8955223880597015,
+      "recall": 0.8108108108108109,
+      "f1": 0.851063829787234,
+      "tp": 60,
+      "fp": 7,
+      "fn": 14,
+      "tn": 42526
+    }
+  ],
+  "display_name": "XGBoost (tuned) \u2014 weighted",
+  "best_params": {
+    "clf__colsample_bytree": "0.6125253169822235",
+    "clf__learning_rate": "0.1754513616606681",
+    "clf__max_depth": "6",
+    "clf__min_child_weight": "2",
+    "clf__n_estimators": "351",
+    "clf__subsample": "0.9579309401710595"
+  },
+  "tuned_variant": "weighted",
+  "search_best_cv_pr_auc": 0.8571290426553144,
+  "cv_pr_auc_str": "0.8571 (search best)",
+  "top_v_features": [
+    "V17",
+    "V14",
+    "V12",
+    "V10"
+  ],
+  "train_seconds": 617.6
+}

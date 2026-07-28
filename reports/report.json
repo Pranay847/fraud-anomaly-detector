@@ -1,0 +1,96 @@
+{
+  "best_model": "xgb-tuned",
+  "best_display_name": "XGBoost (tuned) \u2014 weighted",
+  "cost_minimising_threshold": {
+    "threshold": 0.31,
+    "tp": 61.0,
+    "fp": 9.0,
+    "fn": 13.0,
+    "review_cost": 45.0,
+    "fraud_loss": 1601.8000000000002,
+    "total_cost": 1646.8000000000002,
+    "recall": 0.8243243243243243,
+    "precision": 0.8714285714285714
+  },
+  "chosen_threshold": {
+    "threshold": 0.03,
+    "tp": 65.0,
+    "fp": 22.0,
+    "fn": 9.0,
+    "review_cost": 110.0,
+    "fraud_loss": 1599.1200000000001,
+    "total_cost": 1709.1200000000001,
+    "recall": 0.8783783783783784,
+    "precision": 0.7471264367816092,
+    "cost_premium_vs_minimum": 0.03784308962837013,
+    "tolerance": 0.05
+  },
+  "comparison_table": [
+    {
+      "Model": "XGBoost (tuned) \u2014 weighted",
+      "PR-AUC": 0.8760457258829011,
+      "ROC-AUC": 0.9835745980386612,
+      "Precision @ 2.37632": NaN,
+      "Recall @ 2.37632": NaN,
+      "CV PR-AUC (mean \u00b1 std)": "0.8571 (search best)",
+      "Over-prediction": "1.0x",
+      "Precision @ 0.5": 0.8823529411764706,
+      "Recall @ 0.5": 0.8108108108108109
+    },
+    {
+      "Model": "XGBoost + SMOTE",
+      "PR-AUC": 0.8576943217548791,
+      "ROC-AUC": 0.9899092660007714,
+      "Precision @ 2.37632": NaN,
+      "Recall @ 2.37632": NaN,
+      "CV PR-AUC (mean \u00b1 std)": "0.8422 \u00b1 0.0562",
+      "Over-prediction": "5.0x",
+      "Precision @ 0.5": 0.4507042253521127,
+      "Recall @ 0.5": 0.8648648648648649
+    },
+    {
+      "Model": "XGBoost + class weighting",
+      "PR-AUC": 0.8551732972859183,
+      "ROC-AUC": 0.9906953011366055,
+      "Precision @ 2.37632": NaN,
+      "Recall @ 2.37632": NaN,
+      "CV PR-AUC (mean \u00b1 std)": "0.8420 \u00b1 0.0474",
+      "Over-prediction": "1.5x",
+      "Precision @ 0.5": 0.8333333333333334,
+      "Recall @ 0.5": 0.8108108108108109
+    },
+    {
+      "Model": "XGBoost + random undersampling",
+      "PR-AUC": 0.807282320687489,
+      "ROC-AUC": 0.9897464353592536,
+      "Precision @ 2.37632": NaN,
+      "Recall @ 2.37632": NaN,
+      "CV PR-AUC (mean \u00b1 std)": "0.7074 \u00b1 0.0871",
+      "Over-prediction": "25.9x",
+      "Precision @ 0.5": 0.06038426349496798,
+      "Recall @ 0.5": 0.8918918918918919
+    },
+    {
+      "Model": "Logistic Regression (class-weighted)",
+      "PR-AUC": 0.7635757980247232,
+      "ROC-AUC": 0.9851793932977955,
+      "Precision @ 2.37632": NaN,
+      "Recall @ 2.37632": NaN,
+      "CV PR-AUC (mean \u00b1 std)": "0.7838 \u00b1 0.0585",
+      "Over-prediction": "39.6x",
+      "Precision @ 0.5": 0.05396825396825397,
+      "Recall @ 0.5": 0.918918918918919
+    },
+    {
+      "Model": "Autoencoder (reconstruction error)",
+      "PR-AUC": 0.5007996621355596,
+      "ROC-AUC": 0.9410940694062035,
+      "Precision @ 2.37632": 0.1405152224824356,
+      "Recall @ 2.37632": 0.8108108108108109,
+      "CV PR-AUC (mean \u00b1 std)": "\u2014",
+      "Over-prediction": "n/a (not a probability)",
+      "Precision @ 0.5": NaN,
+      "Recall @ 0.5": NaN
+    }
+  ]
+}

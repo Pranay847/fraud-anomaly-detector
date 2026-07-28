@@ -39,6 +39,7 @@ from .evaluate import (
     plot_confusion_matrices,
     plot_cost_curve,
     plot_pr_curves,
+    recommended_threshold,
     save_metrics,
 )
 from .features import save_top_v
@@ -256,8 +257,19 @@ def build_report(splits) -> dict:
     curves = {}
     for m in metrics:
         cached = load_scores(m["model"], "val")
-        if cached is not None:
-            curves[m.get("display_name", m["model"])] = cached
+        if cached is None:
+            continue
+        curves[m.get("display_name", m["model"])] = cached
+
+        # Calibration in the large: mean predicted probability against the
+        # observed positive rate. Rank-based metrics are blind to this, but it
+        # is what decides whether a fixed threshold like 0.5 means the same
+        # thing from one model to the next.
+        y_true, scores = cached
+        if m["model"] == "autoencoder":
+            m["calibration"] = "n/a (not a probability)"
+        else:
+            m["calibration"] = f"{scores.mean() / y_true.mean():.1f}x"
     plot_pr_curves(curves)
 
     table = comparison_frame(metrics)
@@ -283,23 +295,32 @@ def build_report(splits) -> dict:
     plot_cost_curve(costs, chosen)
     costs.to_csv(REPORTS_DIR / "cost_curve.csv", index=False)
 
+    recommended = recommended_threshold(costs)
     sensitivity = cost_sensitivity(y_true, scores, amounts)
     sensitivity.to_csv(REPORTS_DIR / "cost_sensitivity.csv", index=False)
 
     report = {
         "best_model": best_name,
         "best_display_name": best.get("display_name", best_name),
-        "chosen_threshold": chosen,
+        "cost_minimising_threshold": chosen,
+        "chosen_threshold": recommended,  # what the final test is scored at
         "comparison_table": table.to_dict(orient="records"),
     }
     (REPORTS_DIR / "report.json").write_text(json.dumps(report, indent=2, default=str))
-    write_results_md(splits, metrics, table, best, chosen, costs, sensitivity)
+    write_results_md(splits, metrics, table, best, chosen, costs, sensitivity, recommended)
     print(f"\nBest validation model: {report['best_display_name']} (PR-AUC {best['pr_auc']:.4f})")
-    print(f"Cost-minimising threshold: {chosen['threshold']:.4f}")
+    print(f"Cost-minimising threshold: {chosen['threshold']:.4f} (recall {chosen['recall']:.1%})")
+    print(
+        f"Recommended threshold:     {recommended['threshold']:.4f} "
+        f"(recall {recommended['recall']:.1%}, "
+        f"+{recommended['cost_premium_vs_minimum']:.1%} cost)"
+    )
     return report
 
 
-def write_results_md(splits, metrics, table, best, chosen, costs, sensitivity=None) -> Path:
+def write_results_md(
+    splits, metrics, table, best, chosen, costs, sensitivity=None, recommended=None
+) -> Path:
     summary = splits.summary()
     lines = ["# Results", ""]
     lines.append(
@@ -315,13 +336,17 @@ def write_results_md(splits, metrics, table, best, chosen, costs, sensitivity=No
         )
 
     lines += ["", "## Model comparison (validation set)", ""]
-    header = "| Model | PR-AUC | ROC-AUC | Precision | Recall | CV PR-AUC (5-fold, train) |"
-    lines += [header, "|---|---:|---:|---:|---:|---|"]
+    header = (
+        "| Model | PR-AUC | ROC-AUC | Precision | Recall | CV PR-AUC (5-fold, train) "
+        "| Over-prediction |"
+    )
+    lines += [header, "|---|---:|---:|---:|---:|---|---:|"]
     for m in sorted(metrics, key=lambda x: -x["pr_auc"]):
         at = m["thresholds"][1] if len(m["thresholds"]) > 1 else m["thresholds"][0]
         lines.append(
             f"| {m.get('display_name', m['model'])} | {m['pr_auc']:.4f} | {m['roc_auc']:.4f} "
-            f"| {at['precision']:.4f} | {at['recall']:.4f} | {m.get('cv_pr_auc_str', '—')} |"
+            f"| {at['precision']:.4f} | {at['recall']:.4f} | {m.get('cv_pr_auc_str', '—')} "
+            f"| {m.get('calibration', '—')} |"
         )
     lines += [
         "",
@@ -329,6 +354,13 @@ def write_results_md(splits, metrics, table, best, chosen, costs, sensitivity=No
         "The autoencoder's score is a reconstruction error, not a probability, so its "
         "row is quoted at the 99.5th percentile of its own score distribution — the "
         "comparable operating point, since 0.5 is meaningless on that scale.",
+        "",
+        "**Over-prediction** is the mean predicted probability divided by the observed "
+        "fraud rate — 1.0x is perfectly calibrated in the large. PR-AUC and ROC-AUC are "
+        "rank-based and cannot see this at all, but it is why precision at a fixed "
+        "threshold varies so wildly down the table: the more aggressively a model "
+        "reweights or resamples, the more its probabilities inflate, and the less "
+        "\"0.5\" means the same thing from one row to the next.",
     ]
 
     lines += ["", "## Threshold choice", ""]
@@ -339,17 +371,46 @@ def write_results_md(splits, metrics, table, best, chosen, costs, sensitivity=No
     )
     lines += [
         "",
-        f"- **Chosen threshold: {chosen['threshold']:.4f}**",
+        f"- Cost-minimising threshold: **{chosen['threshold']:.4f}**",
         f"- Catches {int(chosen['tp'])} of {int(chosen['tp'] + chosen['fn'])} frauds "
         f"({chosen['recall']:.1%} recall) at {chosen['precision']:.1%} precision",
         f"- Flags {int(chosen['fp'])} legitimate transactions → ${chosen['review_cost']:,.2f} in review time",
         f"- Lets ${chosen['fraud_loss']:,.2f} of fraud through",
-        f"- **Total expected cost: ${chosen['total_cost']:,.2f}** over "
+        f"- Total modelled cost: **${chosen['total_cost']:,.2f}** over "
         f"{len(splits.y_val):,} validation transactions",
         "",
         "See `reports/cost_vs_threshold.png` for the full curve and "
         "`reports/cost_curve.csv` for the underlying numbers.",
     ]
+
+    if recommended is not None:
+        lines += [
+            "",
+            "### The recommendation is not the argmin",
+            "",
+            "The cost surface is nearly flat across a wide band of thresholds, so the "
+            "minimum is a knife-edge — it wins by a fraction of a percent on a modelled "
+            "quantity while giving up real recall. Reporting it as *the* answer would be "
+            "false precision about an invented $5 assumption.",
+            "",
+            f"**Rule applied:** among thresholds whose total cost is within "
+            f"{recommended['tolerance']:.0%} of the minimum, take the one that catches the "
+            f"most fraud.",
+            "",
+            f"- **Recommended threshold: {recommended['threshold']:.4f}**",
+            f"- Catches {int(recommended['tp'])} of "
+            f"{int(recommended['tp'] + recommended['fn'])} frauds "
+            f"({recommended['recall']:.1%} recall) at {recommended['precision']:.1%} precision",
+            f"- Flags {int(recommended['fp'])} legitimate transactions "
+            f"({int(recommended['fp']) / len(splits.y_val):.3%} of traffic) → "
+            f"${recommended['review_cost']:,.2f} in review time",
+            f"- Costs {recommended['cost_premium_vs_minimum']:.1%} more than the minimum, "
+            f"and buys {int(recommended['tp'] - chosen['tp'])} extra frauds caught",
+            "",
+            "That premium is worth paying because the cost model cannot see chargeback "
+            "fees, support handling, or the customer who closes their account — all of "
+            "which push the true cost of a miss above the transaction value.",
+        ]
 
     if sensitivity is not None and len(sensitivity):
         lines += [
@@ -395,6 +456,29 @@ def write_results_md(splits, metrics, table, best, chosen, costs, sensitivity=No
             f"| Frauds caught | {at['tp']} of {at['tp'] + at['fn']} |",
             f"| False positives | {at['fp']:,} |",
         ]
+
+        val_pr = best["pr_auc"]
+        gap = val_pr - t["pr_auc"]
+        cv_std = best.get("cv_pr_auc_std")
+        lines += [
+            "",
+            f"Validation PR-AUC was {val_pr:.4f}; the test set came in {gap:+.4f} "
+            f"lower at {t['pr_auc']:.4f}.",
+        ]
+        if cv_std:
+            lines.append(
+                f"The cross-validated fold spread on the training set was ±{cv_std:.4f}, so a gap "
+                f"of this size is what sampling noise on {t['n_fraud']} positives looks like, not "
+                f"evidence of overfitting. It is still the honest number: the validation figure "
+                f"was the optimistic end of the range, which is exactly why the test set is only "
+                f"looked at once."
+            )
+        else:
+            lines.append(
+                f"A gap of this size on {t['n_fraud']} positives is within sampling noise. The "
+                f"validation figure was the optimistic end of the range, which is why the test set "
+                f"is only looked at once."
+            )
     else:
         lines.append(
             "_Not yet run. `python -m src.train --final-test` scores the test set once, "

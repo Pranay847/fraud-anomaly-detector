@@ -1,0 +1,46 @@
+{
+  "model": "autoencoder",
+  "split": "val",
+  "n": 42607,
+  "n_fraud": 74,
+  "pr_auc": 0.5007996621355596,
+  "roc_auc": 0.9410940694062035,
+  "thresholds": [
+    {
+      "threshold": 2.376316785812378,
+      "precision": 0.1405152224824356,
+      "recall": 0.8108108108108109,
+      "f1": 0.2395209580838323,
+      "tp": 60,
+      "fp": 367,
+      "fn": 14,
+      "tn": 42166
+    },
+    {
+      "threshold": 3.5783205032348633,
+      "precision": 0.27102803738317754,
+      "recall": 0.7837837837837838,
+      "f1": 0.40277777777777773,
+      "tp": 58,
+      "fp": 156,
+      "fn": 16,
+      "tn": 42377
+    },
+    {
+      "threshold": 11.075981140136719,
+      "precision": 0.627906976744186,
+      "recall": 0.36486486486486486,
+      "f1": 0.4615384615384615,
+      "tp": 27,
+      "fp": 16,
+      "fn": 47,
+      "tn": 42517
+    }
+  ],
+  "display_name": "Autoencoder (reconstruction error)",
+  "epochs_trained": 100,
+  "best_val_recon_loss": 0.42324674129486084,
+  "n_train_legit": 199134,
+  "note": "Trained on legitimate training transactions only; thresholds are score quantiles because reconstruction error is not a probability.",
+  "train_seconds": 803.8
+}

@@ -162,6 +162,31 @@ def pick_threshold(costs: pd.DataFrame) -> dict:
     return {k: (float(v) if isinstance(v, (int, float, np.floating)) else v) for k, v in best.items()}
 
 
+def recommended_threshold(costs: pd.DataFrame, *, tolerance: float = 0.05) -> dict:
+    """The deployment recommendation, which is not the cost argmin.
+
+    The cost surface here is nearly flat across a wide band of thresholds, so
+    the argmin is a knife-edge: it minimises a modelled quantity by a fraction
+    of a percent while giving up real recall. Reporting it as "optimal" would
+    be false precision about an invented $5 assumption.
+
+    The rule instead: among thresholds whose total cost is within `tolerance` of
+    the minimum, take the one that catches the most fraud. That spends a small,
+    bounded and explicitly stated cost premium on recall — which is worth more
+    than the cost model can see, because transaction value omits chargeback
+    fees, support handling and customer harm.
+    """
+    minimum = costs["total_cost"].min()
+    band = costs[costs["total_cost"] <= minimum * (1 + tolerance)]
+    best = band.loc[band["recall"].idxmax()]
+    chosen = {
+        k: (float(v) if isinstance(v, (int, float, np.floating)) else v) for k, v in best.items()
+    }
+    chosen["cost_premium_vs_minimum"] = float(best["total_cost"] / minimum - 1)
+    chosen["tolerance"] = tolerance
+    return chosen
+
+
 def cost_sensitivity(
     y_true,
     scores,
@@ -310,6 +335,7 @@ def comparison_frame(metrics: list[dict], threshold: float = 0.5) -> pd.DataFram
                 f"Precision @ {at['threshold']:g}": at["precision"],
                 f"Recall @ {at['threshold']:g}": at["recall"],
                 "CV PR-AUC (mean ± std)": m.get("cv_pr_auc_str", "—"),
+                "Over-prediction": m.get("calibration", "—"),
             }
         )
     return pd.DataFrame(rows).sort_values("PR-AUC", ascending=False).reset_index(drop=True)
