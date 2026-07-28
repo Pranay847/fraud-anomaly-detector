@@ -30,6 +30,7 @@ from .evaluate import (
     REPORTS_DIR,
     comparison_frame,
     cost_curve,
+    cost_sensitivity,
     evaluate_scores,
     load_all_metrics,
     load_metrics,
@@ -91,17 +92,41 @@ def _cv_pr_auc(estimator, X, y, *, n_splits: int, n_jobs: int) -> dict:
     }
 
 
-def _best_variant_from_metrics() -> str:
-    """Pick which resampling strategy to tune, based on what actually won."""
-    best, best_score = "weighted", -1.0
+def _best_variant_from_metrics(verbose: bool = True) -> str:
+    """Pick which resampling strategy to tune, by the one-standard-error rule.
+
+    Selection is on cross-validated PR-AUC rather than the single validation
+    score, because one split of 74 frauds is a noisy ruler. Among variants
+    within one standard error of the best, the simplest wins — `VARIANTS` is
+    ordered simplest-first, and "simplest" here means fewest moving parts at
+    serving time: class weighting invents no data and adds no hyperparameter.
+
+    Chasing a 0.0002 PR-AUC edge inside a ±0.05 fold spread is fitting the
+    validation set, not the problem.
+    """
+    scored = {}
     for variant in supervised.VARIANTS:
         try:
             m = load_metrics(f"xgb-{variant}")
         except FileNotFoundError:
             continue
-        if m["pr_auc"] > best_score:
-            best, best_score = variant, m["pr_auc"]
-    return best
+        mean = m.get("cv_pr_auc_mean", m["pr_auc"])
+        std = m.get("cv_pr_auc_std", 0.0)
+        scored[variant] = (mean, std)
+
+    if not scored:
+        return "weighted"
+
+    best = max(scored, key=lambda v: scored[v][0])
+    best_mean, best_std = scored[best]
+    tied = [v for v in supervised.VARIANTS if v in scored and scored[v][0] >= best_mean - best_std]
+    choice = tied[0]
+
+    if verbose and len(tied) > 1:
+        detail = ", ".join(f"{v} {scored[v][0]:.4f}±{scored[v][1]:.4f}" for v in tied)
+        print(f"  within one standard error of each other: {detail}")
+        print(f"  -> tuning '{choice}' (simplest of the tied variants)")
+    return choice
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +150,10 @@ def run_model(name: str, splits, args) -> dict:
         detector.fit(X_train, y_train, X_val, y_val)
         scores = detector.score(X_val)
         detector.save(MODELS_DIR / "autoencoder.pt")
+        # The .pt file holds weights only; the detector also carries the feature
+        # transformer and the scaler it was fit with, and scoring new data needs
+        # all three.
+        joblib.dump(detector, MODELS_DIR / "autoencoder.joblib")
 
         metrics = evaluate_scores(
             y_val,
@@ -254,6 +283,9 @@ def build_report(splits) -> dict:
     plot_cost_curve(costs, chosen)
     costs.to_csv(REPORTS_DIR / "cost_curve.csv", index=False)
 
+    sensitivity = cost_sensitivity(y_true, scores, amounts)
+    sensitivity.to_csv(REPORTS_DIR / "cost_sensitivity.csv", index=False)
+
     report = {
         "best_model": best_name,
         "best_display_name": best.get("display_name", best_name),
@@ -261,13 +293,13 @@ def build_report(splits) -> dict:
         "comparison_table": table.to_dict(orient="records"),
     }
     (REPORTS_DIR / "report.json").write_text(json.dumps(report, indent=2, default=str))
-    write_results_md(splits, metrics, table, best, chosen, costs)
+    write_results_md(splits, metrics, table, best, chosen, costs, sensitivity)
     print(f"\nBest validation model: {report['best_display_name']} (PR-AUC {best['pr_auc']:.4f})")
     print(f"Cost-minimising threshold: {chosen['threshold']:.4f}")
     return report
 
 
-def write_results_md(splits, metrics, table, best, chosen, costs) -> Path:
+def write_results_md(splits, metrics, table, best, chosen, costs, sensitivity=None) -> Path:
     summary = splits.summary()
     lines = ["# Results", ""]
     lines.append(
@@ -318,6 +350,28 @@ def write_results_md(splits, metrics, table, best, chosen, costs) -> Path:
         "See `reports/cost_vs_threshold.png` for the full curve and "
         "`reports/cost_curve.csv` for the underlying numbers.",
     ]
+
+    if sensitivity is not None and len(sensitivity):
+        lines += [
+            "",
+            "### Sensitivity to the cost assumptions",
+            "",
+            "The $5 review cost is invented, so the optimum derived from it is worth "
+            "exactly as much as the guess behind it. What transfers is the shape of the "
+            "response. `fn surcharge` adds a fixed per-fraud cost on top of the "
+            "transaction value — chargeback fees, support handling, the customer who "
+            "leaves — because on this dataset the median fraud is under $10, and "
+            "transaction value alone badly undercounts what missing one costs.",
+            "",
+            "| FP cost | FN surcharge | Threshold | Recall | Precision | Caught | Missed | False alarms |",
+            "|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+        for _, r in sensitivity.iterrows():
+            lines.append(
+                f"| ${r['fp_cost']:.0f} | ${r['fn_surcharge']:.0f} | {r['threshold']:.4f} "
+                f"| {r['recall']:.1%} | {r['precision']:.1%} | {int(r['frauds_caught'])} "
+                f"| {int(r['frauds_missed'])} | {int(r['false_positives'])} |"
+            )
 
     test_metrics = [
         json.loads(p.read_text())
@@ -371,14 +425,11 @@ def run_final_test(splits, args) -> dict:
         )
 
     print(f"\n=== FINAL TEST: {name} @ threshold {threshold:.4f} ===")
-    if name == "autoencoder":
-        raise RuntimeError(
-            "the autoencoder artifact needs refitting to score the test set; "
-            "re-run `--model autoencoder` and extend this branch if it wins"
-        )
-
     estimator = joblib.load(MODELS_DIR / f"{name}.joblib")
-    scores = estimator.predict_proba(splits.X_test)[:, 1]
+    if name == "autoencoder":
+        scores = estimator.score(splits.X_test)  # reconstruction error, not a probability
+    else:
+        scores = estimator.predict_proba(splits.X_test)[:, 1]
     metrics = evaluate_scores(
         splits.y_test,
         scores,

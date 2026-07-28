@@ -162,6 +162,47 @@ def pick_threshold(costs: pd.DataFrame) -> dict:
     return {k: (float(v) if isinstance(v, (int, float, np.floating)) else v) for k, v in best.items()}
 
 
+def cost_sensitivity(
+    y_true,
+    scores,
+    amounts,
+    *,
+    fp_costs=(1.0, 5.0, 20.0, 50.0),
+    fn_surcharges=(0.0, 50.0),
+) -> pd.DataFrame:
+    """How much does the recommended threshold depend on the assumed costs?
+
+    The $5 review figure is invented, so a single optimum derived from it is
+    worth exactly as much as the guess behind it. What actually transfers is
+    the shape of the response: which way the threshold moves, and how fast.
+
+    `fn_surcharge` adds a fixed per-fraud cost on top of the transaction value —
+    chargeback fees, support handling, the customer who leaves. Transaction
+    value alone systematically undercounts what a missed fraud costs, and on
+    this dataset the median fraud is under $10, so the surcharge dominates.
+    """
+    rows = []
+    for fp_cost in fp_costs:
+        for surcharge in fn_surcharges:
+            adjusted = np.asarray(amounts, dtype=float).copy()
+            adjusted[np.asarray(y_true) == 1] += surcharge
+            chosen = pick_threshold(cost_curve(y_true, scores, adjusted, fp_cost=fp_cost))
+            rows.append(
+                {
+                    "fp_cost": fp_cost,
+                    "fn_surcharge": surcharge,
+                    "threshold": chosen["threshold"],
+                    "recall": chosen["recall"],
+                    "precision": chosen["precision"],
+                    "frauds_caught": int(chosen["tp"]),
+                    "frauds_missed": int(chosen["fn"]),
+                    "false_positives": int(chosen["fp"]),
+                    "total_cost": chosen["total_cost"],
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 # --------------------------------------------------------------------------
 # Plots
 # --------------------------------------------------------------------------
@@ -289,10 +330,13 @@ def plot_comparison_table(df: pd.DataFrame, path: Path | None = None) -> Path:
         cellText=display.values,
         colLabels=display.columns,
         cellLoc="center",
+        colLoc="center",
         loc="center",
     )
     table.auto_set_font_size(False)
     table.set_fontsize(9)
+    # Model names are long enough to be clipped at the default column width.
+    table.auto_set_column_width(col=list(range(len(display.columns))))
     table.scale(1, 1.5)
     for j in range(len(display.columns)):
         table[0, j].set_facecolor("#dfe6ee")
