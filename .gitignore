@@ -1,0 +1,26 @@
+# Data — the raw CSV is 144 MB and must never be committed.
+# See README for the download instructions (python -m src.download_data).
+data/*
+!data/.gitkeep
+
+# Trained model artifacts
+models/*
+!models/.gitkeep
+
+# Environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS
+Thumbs.db
+.DS_Store
