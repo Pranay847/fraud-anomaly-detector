@@ -1,33 +1,32 @@
 # Fraud Detection on Imbalanced Transaction Data
 
-Comparing a class-weighted logistic regression, XGBoost under three different
-imbalance strategies, and a PyTorch autoencoder trained only on legitimate
-transactions — on 284,807 credit card transactions of which 492 (0.172%) are
-fraud.
+Detects fraudulent credit card transactions in a dataset where only 0.172% of records are fraud
+(492 out of 284,807). Compares six approaches across supervised and unsupervised methods, and
+selects a deployment threshold using an explicit cost model.
 
-The point of the project is not to produce the highest number. It is to decide
-which model to deploy, at which threshold, and to be able to say why.
+Built on the [ULB Credit Card Fraud Detection dataset](https://www.kaggle.com/mlg-ulb/creditcardfraud).
 
----
+## Overview
 
-## Why accuracy is the wrong metric
+Severe class imbalance breaks the metrics most classifiers are evaluated with. A model that labels
+every transaction "legitimate" achieves 99.827% accuracy on this dataset and catches zero fraud, so
+accuracy is not reported anywhere in this project. PR-AUC (average precision) is the primary metric
+throughout, with ROC-AUC reported as secondary.
 
-99.827% of these transactions are legitimate. A model that returns "not fraud"
-for every input scores **99.827% accuracy** and catches **zero** of the 492
-frauds. Accuracy cannot tell that model apart from a useful one, so it is not
-reported anywhere in this project.
+The project covers:
 
-The primary metric throughout is **PR-AUC** (average precision), which is
-computed only from how the model ranks the positive class and is unmoved by the
-enormous pile of true negatives. ROC-AUC is reported as a secondary — every
-model here scores above 0.98 on it, which is precisely the problem: with 284,315
-true negatives the false-positive rate stays tiny no matter how many legitimate
-transactions get flagged, so ROC-AUC compresses genuinely different models into
-a narrow band that looks uniformly excellent.
+- Stratified 70/15/15 splitting with 5-fold cross-validation on the training set
+- A class-weighted logistic regression baseline
+- XGBoost under three imbalance strategies (class weighting, SMOTE, random undersampling)
+- Hyperparameter search optimizing average precision
+- A PyTorch autoencoder trained only on legitimate transactions, using reconstruction error as an
+  anomaly score
+- Threshold selection driven by a stated cost model, with sensitivity analysis
+- Error analysis on the misclassified transactions
 
 ## Results
 
-Validation set (42,607 transactions, 74 fraud). Full detail in [results.md](results.md).
+Validation set (42,607 transactions, 74 fraud):
 
 | Model | PR-AUC | ROC-AUC | Precision @ 0.5 | Recall @ 0.5 | Over-prediction |
 |---|---:|---:|---:|---:|---:|
@@ -38,110 +37,153 @@ Validation set (42,607 transactions, 74 fraud). Full detail in [results.md](resu
 | Logistic Regression (class-weighted) | 0.7636 | 0.9852 | 0.0540 | 0.9189 | 39.6x |
 | Autoencoder (reconstruction error) | 0.5008 | 0.9411 | 0.2710 | 0.7838 | n/a |
 
-**Final test set — evaluated exactly once, on the single model selected by validation PR-AUC:**
+Test set, evaluated once on the model selected by validation PR-AUC:
 
 | Metric | Value |
 |---|---:|
-| PR-AUC | **0.8362** |
+| PR-AUC | 0.8362 |
 | Recall @ threshold 0.03 | 0.8243 (61 of 74 frauds) |
 | Precision @ threshold 0.03 | 0.7011 (26 false positives) |
 
-Validation said 0.8760, the test set said 0.8362. The 0.04 gap is what sampling
-noise on 74 positives looks like — the cross-validated fold spread measured on
-this same pipeline was ±0.047 — but the test number is the honest one, and the
-validation figure was the optimistic end of the range. That is precisely why
-the test set is opened once.
+Full numbers, including the cost sensitivity table, are in [results.md](results.md).
 
-### Four things the table says
+### Notes on the table
 
-**Look at the ROC-AUC column, then look at the autoencoder row.** It scores
-**0.9411 ROC-AUC** — which sounds like a strong model — and **0.5008 PR-AUC**.
-Every model here clears 0.98 ROC-AUC while their PR-AUCs range from 0.50 to
-0.88. If you selected on ROC-AUC you would call these models roughly
-equivalent. They are not. This one row is the entire argument for the metric
-choice, made concrete.
+**ROC-AUC is not informative here.** Every model scores above 0.98 while PR-AUC ranges from 0.50 to
+0.88. The autoencoder is the clearest case: 0.9411 ROC-AUC against 0.5008 PR-AUC. With 284,315 true
+negatives, the false positive rate stays low regardless of how many legitimate transactions are
+flagged, which compresses genuinely different models into a narrow band.
 
-**SMOTE did not beat class weighting.** 0.8577 against 0.8552, with a
-cross-validated fold spread of ±0.05 — the gap is twenty times smaller than the
-noise. Treating that as a win would be reading the validation set. The
-one-standard-error rule was applied instead: among variants within one standard
-error of the best, take the simplest, which is class weighting (it invents no
-data and adds no hyperparameter). Undersampling was the clear loser at 0.8073 —
-discarding 199,000 legitimate transactions costs real information, and its fold
-spread (±0.087) is the widest in the table.
+**SMOTE did not outperform class weighting.** The gap is 0.0025 PR-AUC against a cross-validated
+fold spread of ±0.05. The one-standard-error rule selects the simplest variant within one standard
+error of the best, which is class weighting. Random undersampling was clearly worse at 0.8073, and
+had the widest fold spread at ±0.087.
 
-**Resampling wrecks calibration, and rank metrics cannot see it.** The
-over-prediction column is the mean predicted probability divided by the actual
-fraud rate. The tuned model is calibrated almost exactly (1.0x); undersampling
-over-predicts by **26x** and balanced logistic regression by **40x**. PR-AUC and
-ROC-AUC are rank-based and are blind to this — but it is why precision at a
-fixed 0.5 threshold swings from 0.88 to 0.05 down the table. A threshold of
-"0.5" does not mean the same thing in any two of these rows, which matters the
-moment you deploy one.
+**Over-prediction** is mean predicted probability divided by observed fraud rate; 1.0x is calibrated.
+Resampling and reweighting inflate predicted probabilities, up to 26x for undersampling and 40x for
+balanced logistic regression. Rank-based metrics cannot detect this, but it is why precision at a
+fixed 0.5 threshold ranges from 0.88 to 0.05 across the table.
 
-**Tuning moved PR-AUC up and ROC-AUC down** — 0.8552 → 0.8760 on PR-AUC, 0.9907
-→ 0.9836 on ROC-AUC. The search optimised `average_precision`, and it traded
-away the metric it was not asked about. Small, but a clean demonstration that
-the scoring choice inside the search is a real decision.
+## Requirements
 
+- Python 3.12
+- ~2 GB disk space (dataset is 144 MB, model artifacts ~2 MB)
+- CPU only; no GPU required
 
+## Setup
 
----
+```bash
+git clone https://github.com/Pranay847/fraud-anomaly-detector.git
+cd fraud-anomaly-detector
+python -m venv .venv
+```
 
-## Data
+Activate the environment (`.venv\Scripts\activate` on Windows, `source .venv/bin/activate`
+otherwise), then:
 
-[Credit Card Fraud Detection](https://www.kaggle.com/mlg-ulb/creditcardfraud)
-(ULB) — two days of European cardholder transactions from September 2013.
+```bash
+pip install -r requirements.txt
+```
 
-`V1`–`V28` are principal components. The original features were transaction
-details a bank cannot publish, so they were PCA-transformed before release.
-This is worth stating plainly because it is a **real production constraint, not
-a defect of the exercise**: fraud systems routinely operate on features that are
-hashed, embedded, or otherwise stripped of meaning for privacy reasons. Two
-things follow. There is no domain feature engineering to do — no "distance from
-home", no "merchant category" — and no model explanation here will ever be
-readable by a fraud analyst. `Time` and `Amount` are the only raw columns.
+For a byte-exact environment, use `requirements-lock.txt` instead.
 
-### What the EDA changed
+## Getting the data
 
-Full detail in [notebooks/01_eda.ipynb](notebooks/01_eda.ipynb).
+```bash
+python -m src.download_data
+```
 
-**Fraud is not the large-value tail.** Median fraud is **$9.25** against **$22.00**
-for legitimate transactions — fraud skews *smaller* at the median and only leads
-on the mean ($122 vs $88). The intuition that fraud means big-ticket purchases
-is wrong here, and it has a direct consequence: since a missed fraud costs
-roughly the transaction amount, and the median fraud is under ten dollars, the
-economics of chasing every case are much weaker than they first appear. This is
-what makes the threshold analysis the most interesting part of the project.
+The dataset is not committed. This downloads `creditcard.csv` to `data/` from a Hugging Face mirror
+pinned to a commit SHA, and verifies the file size, SHA-256, shape, column names and fraud count
+before accepting it. The download is skipped if a verified copy already exists.
 
-**Hour-of-day carries real signal.** The 2am fraud rate is **1.71%** against a
-0.173% baseline — roughly ten times over. Volume collapses overnight while fraud
-does not. `Time` is therefore converted to hour-of-day and the raw column
-dropped: across a two-day window raw `Time` is nearly a row index, and a tree
-will happily split on "day two", which generalises to nothing.
+Kaggle is the canonical source but requires an account. The mirror is byte-identical
+(150,828,752 bytes, `sha256 76274b69...12de5`). To use a manual download instead, place
+`creditcard.csv` in `data/` and the verification step will validate it.
 
-**V17, V14, V12 and V10 separate the classes most strongly** (correlations of
--0.33 to -0.22 with the label). The interaction terms are built from these four.
+## Usage
 
-**There are 1,081 exact duplicate rows.** They are kept rather than dropped, for
-comparability with the published results this dataset is usually benchmarked
-against — but keeping them has a measurable cost, quantified under Limitations
-below.
+Train a single model:
 
----
+```bash
+python -m src.train --model baseline
+```
+
+Valid values are `baseline`, `xgb-weighted`, `xgb-smote`, `xgb-under`, `xgb-tuned`, `autoencoder`,
+and `all`. Each run writes metrics to `reports/metrics/<name>.json` and an artifact to `models/`.
+
+Train everything and regenerate all plots and `results.md`:
+
+```bash
+python -m src.train --model all
+```
+
+Rebuild plots and `results.md` from existing metrics without retraining:
+
+```bash
+python -m src.train --report
+```
+
+Score the test set:
+
+```bash
+python -m src.train --final-test
+```
+
+This runs the best validation model against the test set once and then refuses to run again, since
+repeated test-set evaluation turns a held-out set into a second validation set. Pass `--force` to
+override.
+
+Run the tests:
+
+```bash
+pytest tests/ -q
+```
+
+### Runtimes
+
+Measured on 14 CPU cores. `--model all` takes about 26 minutes total.
+
+| Model | Time |
+|---|---:|
+| `baseline` | 22s |
+| `xgb-weighted` | 31s |
+| `xgb-smote` | 64s |
+| `xgb-under` | 18s |
+| `xgb-tuned` | 10m 18s |
+| `autoencoder` | 13m 24s |
+
+Useful flags for faster runs: `--skip-cv` skips cross-validation, `--n-iter` sets the number of
+hyperparameter search iterations (default 25), and `--ae-epochs` caps autoencoder training
+(default 100). `--search-jobs` and `--model-jobs` control parallelism; their product should stay
+at or below the core count.
+
+## Project structure
+
+```
+src/
+  download_data.py   dataset fetch and integrity verification
+  data.py            loading, stratified splits, cross-validation folds
+  features.py        log-amount, hour-of-day, V-component interactions
+  baseline.py        class-weighted logistic regression
+  supervised.py      XGBoost variants and hyperparameter search
+  autoencoder.py     PyTorch autoencoder trained on legitimate transactions
+  evaluate.py        metrics, plots, cost analysis
+  train.py           CLI entry point
+notebooks/
+  01_eda.ipynb              exploratory analysis
+  02_error_analysis.ipynb   analysis of misclassified transactions
+tests/               split integrity, leakage guards, metric correctness
+reports/             generated plots, metrics JSON, cost curves
+data/                dataset (gitignored)
+models/              trained artifacts (gitignored)
+```
 
 ## Method
 
 ### Splitting
 
-Stratified 70/15/15, in two stages, seeded:
-
-```python
-X_trainval, X_test, y_trainval, y_test = train_test_split(
-    X, y, test_size=0.15, stratify=y, random_state=42)
-X_train, X_val, y_train, y_val = train_test_split(
-    X_trainval, y_trainval, test_size=0.176, stratify=y_trainval, random_state=42)
-```
+Stratified 70/15/15 in two stages, seeded at 42:
 
 | Split | Rows | Fraud | Fraud rate |
 |---|---:|---:|---:|
@@ -149,19 +191,14 @@ X_train, X_val, y_train, y_val = train_test_split(
 | val | 42,607 | 74 | 0.174% |
 | test | 42,722 | 74 | 0.173% |
 
-`stratify` is the load-bearing argument. Split 492 positives three ways without
-it and the validation fraud count becomes a lottery — and since every metric
-here is computed from those 74 positives, the metric moves with the draw.
+Stratification matters at this positive rate: splitting 492 positives three ways without it makes
+the validation fraud count vary substantially, and every metric moves with it. Because 74 positives
+is a thin basis for comparison, the baseline and the three XGBoost variants are also scored by
+5-fold stratified cross-validation, reported as mean ± std.
 
-Because 74 positives is a thin basis for a decision, the baseline and all three
-XGBoost variants are additionally scored by **5-fold stratified cross-validation
-on the training set**, reported as mean ± std. The fold-to-fold spread turns out
-to be ±0.05 PR-AUC, which is larger than most of the gaps between models — and
-that fact drives the model selection below.
+### Resampling
 
-### Resampling never touches held-out data
-
-Every resampler is a step *inside* an `imblearn.pipeline.Pipeline`:
+Every resampler is a step inside an `imblearn.pipeline.Pipeline`:
 
 ```python
 ImbPipeline([("features", FraudFeatures()),
@@ -169,185 +206,86 @@ ImbPipeline([("features", FraudFeatures()),
              ("clf", XGBClassifier(...))])
 ```
 
-This is the structural guarantee, not a promise: imblearn's pipeline calls
-`fit_resample` during `fit` and skips it entirely at `predict` time. Under
-cross-validation, no fold is ever scored by a model that saw a synthetic
-neighbour interpolated from its own held-out rows. Resampling before splitting
-is the classic way to inflate results on this dataset, and the pipeline is what
-makes avoiding it verifiable rather than aspirational.
+imblearn's pipeline applies `fit_resample` during `fit` and skips it during `predict`, so under
+cross-validation no fold is scored by a model that saw synthetic neighbors derived from its own
+held-out rows. Resampling before splitting is a common source of inflated results on this dataset.
 
-The same applies to feature engineering. The interaction terms are built from
-the components most correlated with the label, and that correlation is computed
-inside `fit()` — so the choice of features is made per-fold, from training rows
-only.
+The same applies to feature engineering: interaction terms are built from the components most
+correlated with the label, and that correlation is computed inside `fit()` from training rows only.
 
-### The autoencoder
+### Features
 
-Trained on **legitimate training transactions only**, so it learns to
-reconstruct normal behaviour and nothing else. Fraud, being off that manifold,
-should reconstruct poorly, and per-row reconstruction error becomes an anomaly
-score produced without a single fraud label.
+`V1`–`V28` are PCA components, so no domain feature engineering is possible on them. The two raw
+columns are used as follows:
 
-One deviation from the standard recipe: early stopping monitors reconstruction
-loss on the **legitimate portion** of validation, not all of it. Including fraud
-makes the stopping signal ambiguous — rising fraud reconstruction error is the
-outcome we want, so a combined loss would penalise the model for succeeding.
+- `Amount` is log-transformed (it is heavily right-skewed)
+- `Time` becomes hour-of-day, and the raw column is dropped. Across a two-day window raw `Time` is
+  close to a row index, and a tree can split on "day two", which does not generalize
+- Interaction terms are products of the four components most correlated with the label
+  (V17, V14, V12, V10)
 
----
+### Autoencoder
 
-## Reproducing
+Trained only on legitimate training transactions, so it models normal behavior; per-row
+reconstruction error becomes the anomaly score. The feature transformer and scaler are fit on the
+same legitimate subset, so no fraud information reaches the model.
 
-```bash
-python -m venv .venv && .venv/Scripts/activate   # or source .venv/bin/activate
-pip install -r requirements.txt
-python -m src.download_data
-pytest tests/ -q
-python -m src.train --model all
-```
+Early stopping monitors reconstruction loss on the legitimate portion of validation rather than all
+of it. Increasing fraud reconstruction error is the desired behavior, so a combined loss would
+penalize the model for working correctly.
 
-`src/download_data.py` fetches the CSV from a Hugging Face mirror pinned to a
-commit SHA, and refuses it unless the size, SHA-256, shape, column names and
-fraud count all match the published dataset. Kaggle is the canonical source but
-requires an account; the mirror is byte-identical
-(`sha256 76274b69…12de5`, 150,828,752 bytes).
+### Threshold selection
 
-```
-src/
-  download_data.py   fetch + verify the dataset
-  data.py            loading, stratified splits, CV
-  features.py        log-amount, hour-of-day, V-interactions
-  baseline.py        class-weighted logistic regression
-  supervised.py      XGBoost + three resampling variants + search
-  autoencoder.py     PyTorch autoencoder, trained on legitimate rows only
-  evaluate.py        metrics, plots, cost analysis
-  train.py           CLI: --model, --report, --final-test
-```
+The cost model assumes a false positive costs $5 in analyst review time and a missed fraud costs the
+transaction amount. Under those assumptions the cost-minimizing threshold is 0.31, but the cost
+surface is nearly flat between 0.03 and 0.99, so the minimum is not meaningfully better than nearby
+points.
 
----
+The threshold shipped is 0.03, chosen by a stated rule: among thresholds within 5% of minimum cost,
+take the one catching the most fraud. It costs 3.8% more than the minimum and catches 4 more frauds,
+flagging 22 of 42,607 validation transactions (0.052%). The rationale is that transaction value
+undercounts the true cost of a miss, which also includes chargeback fees and support handling, and
+the median fraud here is only $9.25.
 
-## Which model I would deploy, and at what threshold
+`results.md` includes a sensitivity table showing how the recommended threshold responds to
+different cost assumptions; it ranges from 0.01 to 0.99, with recall from 79.7% to 89.2%.
 
-**Deploy the tuned, class-weighted XGBoost at a threshold of 0.03.**
+## Notebooks
 
-On validation that catches **65 of 74 frauds (87.8% recall)** at 74.7%
-precision, flagging **22 transactions out of 42,607** — a 0.052% flag rate, or
-about one review per 1,900 transactions. On the held-out test set the same
-configuration caught 61 of 74 (82.4%) with 26 false positives.
+Both are committed with outputs, so they render on GitHub without running anything.
 
-### Why 0.03 and not the cost-minimising threshold
-
-The stated cost model — $5 of analyst time per false positive, the transaction
-amount per missed fraud — has its minimum at threshold 0.31. I am not
-recommending it, for a reason visible in
-[reports/cost_vs_threshold.png](reports/cost_vs_threshold.png): **the cost
-surface is almost flat**. Thresholds from 0.03 to 0.99 all sit within a few
-percent of the minimum. Taking the argmin of a curve that flat means reporting
-false precision about an invented $5 assumption.
-
-The rule applied instead is stated up front: *among thresholds within 5% of the
-minimum cost, take the one that catches the most fraud.* That is threshold 0.03
-— it costs 3.8% more than the minimum and buys 4 more frauds caught. The
-premium is worth paying because the cost model cannot see chargeback fees,
-support handling, or the customer who closes their account. Transaction value
-systematically undercounts what a miss costs, and on this dataset the median
-fraud is $9.25, so that omission dominates.
-
-The [sensitivity table](results.md#sensitivity-to-the-cost-assumptions) shows
-how far this moves: across plausible cost assumptions the recommended threshold
-ranges from 0.01 to 0.99 and recall from 79.7% to 89.2%. **The shape of that
-response is the transferable result, not the specific number** — anyone
-deploying this would substitute their own review cost and chargeback fee and
-re-read the table.
-
-## What the errors say
-
-Full analysis in
-[notebooks/02_error_analysis.ipynb](notebooks/02_error_analysis.ipynb).
-
-**The missed fraud is not a subtype the model overlooks — it is fraud that
-looks legitimate.** On all eight of the components that separate the classes
-most strongly, the missed frauds sit closer to the *legitimate* mean than to
-the caught-fraud mean. V14 is the clearest: legitimate averages 0.016, caught
-fraud averages **-7.82**, missed fraud averages **-0.93**. In the feature space
-available to the model, those nine transactions are ordinary spending.
-
-That decides the next step. **More trees, deeper trees, and another week of
-hyperparameter search cannot recover them** — no amount of tuning separates
-points that overlap. The next real gain is different features, not a better
-model: velocity, deviation from the cardholder's own history, merchant risk,
-device reuse. None of them exist here, and the PCA transform means they cannot
-be reconstructed either.
-
-Two smaller notes. The residual is **not** just the cheap tail — missed fraud
-averages $177.68 against $149.87 for caught fraud, so the misses skew slightly
-*more* expensive and are a genuine blind spot rather than a deliberate economy.
-And 6 of the 22 false positives score above 0.90: the model is confidently
-wrong about those, and with a queue this small they are worth pulling by hand,
-because confident errors are where label noise hides.
+- [01_eda.ipynb](notebooks/01_eda.ipynb) covers class imbalance, amount and time distributions by
+  class, and component correlations. Findings: fraud skews smaller at the median ($9.25 against
+  $22.00), the 2am fraud rate is 1.71% against a 0.173% baseline, and V17/V14/V12/V10 separate the
+  classes most strongly.
+- [02_error_analysis.ipynb](notebooks/02_error_analysis.ipynb) examines the misclassified
+  transactions. On all eight of the most discriminative components, missed frauds sit closer to the
+  legitimate mean than to the caught-fraud mean, meaning they are not a distinguishable fraud
+  subtype in this feature space. Of the 22 false positives, 6 score above 0.90.
 
 ## Limitations
 
-**The PCA features cap what is achievable and remove all interpretability.**
-No domain feature engineering is possible, and no explanation this model
-produces can be handed to a fraud analyst. The error analysis suggests this is
-the binding constraint on performance, not the model class.
+**PCA features.** The original transaction details were PCA-transformed before release for privacy.
+This rules out domain feature engineering and means model explanations cannot be interpreted by a
+fraud analyst. The error analysis indicates this is the binding constraint on performance rather
+than the choice of model.
 
-**1,081 exact duplicate rows leak across the split.** They are kept for
-comparability with published results on this dataset, but the cost is
-measurable: **208 of 42,607 validation rows (0.488%) have an exact duplicate in
-training, including 2 of the 74 validation frauds.** That inflates the reported
-metrics slightly. Deduplicating first would be the more defensible choice for a
-production model and would change the numbers here by a small but non-zero
-amount.
+**Duplicate rows.** The dataset contains 1,081 exact duplicates, kept here for comparability with
+published results on this dataset. As a result 208 of 42,607 validation rows (0.488%) have an exact
+duplicate in training, including 2 of the 74 validation frauds, which inflates the reported metrics
+slightly.
 
-**Two days of transactions from 2013, one geography, one institution.** There
-is no temporal drift testing, because there is not enough time span to do it.
-Fraud patterns move continuously as attackers adapt, and a model trained on
-September 2013 would degrade against November 2013 in ways nothing here can
-measure. A production version needs scheduled retraining and drift monitoring
-on the score distribution.
+**No temporal validation.** The data covers two days from one institution in 2013. There is not
+enough time span to test for drift, and fraud patterns change as attackers adapt.
 
-**74 positives in each held-out split** is a thin basis for any single
-estimate. This is why cross-validation is reported alongside the point
-estimates, and why the ±0.05 fold spread is quoted whenever two models are
-compared.
+**Small positive counts.** Each held-out split contains 74 frauds, so single-split estimates are
+noisy. Cross-validated results are reported alongside point estimates for this reason.
 
-**The cost model is invented.** $5 per review is a plausible guess, not a
-measured figure, which is why the sensitivity table exists.
+**Cost assumptions are illustrative.** The $5 review cost is a stated assumption, not a measured
+figure, which is what the sensitivity analysis is for.
 
-## With more time or data
+## Data source
 
-- **Deduplicate and re-run**, and report the honest delta rather than the
-  flattering number.
-- **Velocity and history features** — the single highest-value change, and the
-  one the error analysis points at directly. Requires transaction data this
-  dataset does not contain.
-- **Calibrate the probabilities explicitly** (isotonic or Platt scaling on a
-  held-out fold) so the threshold means the same thing after every retrain.
-- **Temporal validation** — train on early transactions, test on later ones,
-  which measures the thing a random split cannot.
-- **Cost-sensitive training** rather than post-hoc thresholding: weight each
-  example by its transaction amount so the model optimises money rather than
-  counts.
-- **An ensemble of the tuned XGBoost and the autoencoder.** The autoencoder is
-  much worse alone, but it is wrong in different ways, and it needs no labels —
-  which is exactly the property you want against fraud patterns that have not
-  been labelled yet.
-
-## Note on the autoencoder
-
-It lost, decisively: 0.5008 PR-AUC against 0.8760. That is the honest result and
-it is not a surprise — a fully labelled dataset plays to the strengths of
-supervised learning, and asking a model to find fraud without ever showing it
-one is a handicap.
-
-The comparison is still worth making, for two reasons. Its PR-AUC of 0.50 is
-roughly **290 times better than the 0.0017 a random classifier achieves**, and
-it got there without a single fraud label. And the labels this project relies
-on are a luxury: in production they arrive weeks late, incomplete, and never at
-all for the attack that started this morning. A detector that needs no positive
-labels degrades differently from one that does, which is an argument for
-running it *alongside* the supervised model rather than instead of it.
-
-
-
+Machine Learning Group, Université Libre de Bruxelles. Transactions made by European cardholders in
+September 2013, released with `V1`–`V28` PCA-transformed for confidentiality. Available on
+[Kaggle](https://www.kaggle.com/mlg-ulb/creditcardfraud).
