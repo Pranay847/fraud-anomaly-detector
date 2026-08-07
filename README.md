@@ -349,26 +349,5 @@ all for the attack that started this morning. A detector that needs no positive
 labels degrades differently from one that does, which is an argument for
 running it *alongside* the supervised model rather than instead of it.
 
----
 
-## Resume bullets
-
-Measured numbers only.
-
-- Built an imbalanced classification pipeline on 284K credit card transactions
-  (0.172% fraud rate), using stratified train/validation/test splits and PR-AUC
-  as the primary metric; demonstrated the failure mode concretely by showing a
-  model with 0.94 ROC-AUC scoring 0.50 PR-AUC on the same data.
-- Compared six approaches — class-weighted logistic regression, XGBoost with
-  class weighting / SMOTE / undersampling, a tuned XGBoost, and a PyTorch
-  autoencoder trained only on legitimate transactions — improving PR-AUC from
-  0.764 (baseline) to 0.876 (validation), 0.836 on a test set opened once.
-- Applied the one-standard-error rule to reject a 0.0025 PR-AUC "win" for SMOTE
-  that sat inside a ±0.05 cross-validation spread, and identified that
-  aggressive resampling inflated predicted probabilities by up to 26x — making
-  a fixed decision threshold incomparable across models.
-- Translated model output into a deployment recommendation via an explicit cost
-  model, choosing a threshold catching 87.8% of fraud at a 0.05% flag rate, and
-  showed through sensitivity analysis that the recommended threshold ranges from
-  0.01 to 0.99 across plausible cost assumptions.
 
