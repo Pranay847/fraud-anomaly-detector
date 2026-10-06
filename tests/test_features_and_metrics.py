@@ -11,7 +11,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.evaluate import cost_curve, pick_threshold, threshold_metrics
+from src.evaluate import (
+    comparison_frame,
+    cost_curve,
+    pick_threshold,
+    recommended_threshold,
+    threshold_metrics,
+)
 from src.features import SECONDS_PER_DAY, FraudFeatures
 
 
@@ -126,3 +132,49 @@ def test_cost_curve_declines_to_chase_cheap_fraud():
     chosen = pick_threshold(costs)
     assert chosen["fp"] == 0
     assert chosen["total_cost"] == pytest.approx(1.0)
+
+
+def test_recommended_threshold_trades_bounded_cost_for_recall():
+    """Within the tolerance band, recall wins; outside it, cost still rules."""
+    costs = pd.DataFrame(
+        {
+            "threshold": [0.9, 0.5, 0.3, 0.1],
+            "total_cost": [100.0, 103.0, 104.0, 200.0],
+            "recall": [0.5, 0.7, 0.8, 0.95],
+        }
+    )
+
+    chosen = recommended_threshold(costs, tolerance=0.05)
+    # 0.1 has the best recall but costs 2x the minimum, so it is out of the band.
+    assert chosen["threshold"] == pytest.approx(0.3)
+    assert chosen["cost_premium_vs_minimum"] == pytest.approx(0.04)
+    assert chosen["tolerance"] == 0.05
+
+    # With zero tolerance the recommendation collapses to the cost argmin.
+    assert recommended_threshold(costs, tolerance=0.0)["threshold"] == pytest.approx(0.9)
+
+
+def test_comparison_frame_sorts_by_pr_auc_and_falls_back_on_threshold():
+    def bundle(name, pr_auc, thresholds, **extra):
+        return {
+            "model": name,
+            "pr_auc": pr_auc,
+            "roc_auc": 0.99,
+            "thresholds": [{"threshold": t, "precision": t, "recall": 1 - t} for t in thresholds],
+            **extra,
+        }
+
+    df = comparison_frame(
+        [
+            bundle("weak", 0.4, [0.3, 0.5]),
+            bundle("strong", 0.9, [0.5], display_name="Strong model", cv_pr_auc_str="0.9 ± 0.1"),
+        ]
+    )
+
+    assert list(df["Model"]) == ["Strong model", "weak"]
+    assert df.loc[0, "Precision @ 0.5"] == pytest.approx(0.5)
+    assert df.loc[1, "CV PR-AUC (mean ± std)"] == "—"
+
+    # A model saved without a 0.5 row is reported at its first threshold, not dropped.
+    only_low = comparison_frame([bundle("no-half", 0.6, [0.3])])
+    assert "Precision @ 0.3" in only_low.columns
